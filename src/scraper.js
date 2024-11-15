@@ -43,15 +43,35 @@ async function pushProjectsToAirtable(projects) {
       existingProjects.map(record => record.fields.project_name)
     );
 
-    // Check if any project exists - if so, return false to stop scraping
-    if (projects.some(project => existingProjectNames.has(project.project_name))) {
-      console.log('Found existing project - stopping scrape');
-      return false;
+    // Count consecutive existing projects
+    let consecutiveDuplicates = 0;
+    for (const project of projects) {
+      if (existingProjectNames.has(project.project_name)) {
+        consecutiveDuplicates++;
+      } else {
+        consecutiveDuplicates = 0;
+      }
+      
+      // If we find 30 consecutive duplicates, assume we've seen this page
+      if (consecutiveDuplicates >= 30) {
+        console.log('Found 30 consecutive duplicate projects - stopping scrape');
+        return false;
+      }
     }
 
-    // Continue with batching logic since all projects are new
-    for (let i = 0; i < projects.length; i += 10) {
-      const batch = projects.slice(i, i + 10);
+    // Filter out any duplicate projects
+    const newProjects = projects.filter(project => 
+      !existingProjectNames.has(project.project_name)
+    );
+
+    if (newProjects.length === 0) {
+      console.log('No new projects to add in this batch');
+      return true; // Continue scraping as we might find new projects on next pages
+    }
+
+    // Continue with existing batching logic for new projects
+    for (let i = 0; i < newProjects.length; i += 10) {
+      const batch = newProjects.slice(i, i + 10);
       let retries = 3;
       
       while (retries > 0) {
@@ -233,11 +253,11 @@ async function scrapeRootData() {
       
       // Append projects from current page to JSON
       await appendProjectsToJson(projects);
-      await pushProjectsToAirtable(projects);
-    //   if (!shouldContinue) {
-    //     console.log('Stopping scrape as existing projects found');
-    //     break;
-    //   }
+      const shouldContinue = await pushProjectsToAirtable(projects);
+      if (!shouldContinue) {
+        console.log('Stopping scrape due to consecutive duplicates');
+        break;
+      }
       console.log(`CURRENT PAGE: ${currentPage} (Added ${projects.length} projects)`);
       
       // Go to next page if not last
